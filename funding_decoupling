@@ -1,0 +1,109 @@
+# 1. 自动安装和升级必要的运行库（Colab 专用）
+!pip install -q google-generativeai xlrd openpyxl
+
+import pandas as pd
+import google.generativeai as genai
+import json
+import time
+from google.colab import files
+
+# ==========================================
+# 🛑 核心设置区：请把下面的双引号内换成您的 API KEY (绝对不要带中文)
+GOOGLE_API_KEY = "YOUR_API_KEY_HERE"
+# ==========================================
+
+# 2. 配置大模型 (使用您确定的 preview 最新版)
+genai.configure(api_key=GOOGLE_API_KEY)
+model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+
+# 3. 核心 Prompt 提示词
+system_prompt = """
+你是一位深谙全球科技政策与科学计量学（Science of Science）的客观评估专家。你的任务是对输入的科研文本进行双维度的量化打分。无论文本是中文还是英文，请忽略语言差异，穿透其底层的“叙事动机”和“科学逻辑”。
+
+请根据以下两个维度，分别给出 1-10分 的整数评分：
+
+【维度一：宏大叙事与政策套话得分 (Macro_Score)】
+高分 (8-10分)：文本充满自上而下的政策响应动机；大量使用缺乏微观实体的宏观热词（如：赋能、全链条、卡脖子、体系化、新变化新挑战、战略需求）；强调解决宏观产业或社会痛点，掩盖了具体科学机制细节。
+低分 (1-3分)：文本纯粹聚焦学术，几乎没有政策性包装，开篇直奔具体的科学空白或技术矛盾。
+
+【维度二：科学逻辑与底层机制得分 (First_Principle_Score)】
+高分 (8-10分)：文本逻辑自下而上；探讨极其具体的物理/生物/算法底层机制（回答 Why 和 How）；包含高密度的实体科学名词（如特定的蛋白质受体、数学方程参数、算法网络架构）；对研究边界有克制、清晰的界定。
+低分 (1-3分)：文本停留在表象的功能描述（回答 What）；用模糊的形容词代替严密的逻辑推演；像在拼接技术模块，缺乏对底层规律的探索。
+
+【输出要求】
+必须严格输出纯 JSON 格式，不要有任何多余的解释、markdown符号或换行符，格式如下：
+{"Macro_Score": 8, "First_Principle_Score": 3, "Reasoning": "打分的一句话简要理由"}
+"""
+
+# 4. 定义打分函数（严格对齐的代码）
+def get_scores(text):
+    # 这一行前面是4个空格
+    if pd.isna(text) or str(text).strip() == "":
+        return None, None, "文本为空，跳过打分"
+
+    # 这一行前面也是4个空格，和上面的if对齐（您刚才就是这里歪了）
+    prompt = system_prompt + f"\n\n【输入的科研文本】：\n{text}"
+
+    try:
+        response = model.generate_content(prompt)
+        raw_text = response.text.strip()
+
+        # 清理大模型可能带有的 Markdown 标记
+        if raw_text.startswith("```json"):
+            raw_text = raw_text[7:-3]
+        elif raw_text.startswith("```"):
+            raw_text = raw_text[3:-3]
+
+        result = json.loads(raw_text)
+        return result.get('Macro_Score'), result.get('First_Principle_Score'), result.get('Reasoning')
+    except Exception as e:
+        print(f"      ❌ AI 打分出错: {e}")
+        return None, None, f"Error: {e}"
+
+# 5. 开始读取文件与处理
+file_name = "CN-AI.xls"
+print(f"📂 正在读取文件: {file_name}")
+df = pd.read_excel(file_name)
+
+# 创建新列存放打分结果
+df['Grant_Macro_Score'] = ""
+df['Grant_FP_Score'] = ""
+df['Grant_Reasoning'] = ""
+df['Paper_Macro_Score'] = ""
+df['Paper_FP_Score'] = ""
+df['Paper_Reasoning'] = ""
+
+total_rows = len(df)
+print(f"🚀 开始为您打分，总计 {total_rows} 条数据...\n")
+
+# 遍历每一行
+for index, row in df.iterrows():
+    print(f"⏳ 正在处理第 {index + 1}/{total_rows} 行 (UID: {row.get('UID', 'Unknown')})...")
+
+    # 评估基金摘要
+    print("   👉 正在评估 基金摘要 (Grant)...")
+    g_m_score, g_fp_score, g_reason = get_scores(row['Project Abstract'])
+    df.at[index, 'Grant_Macro_Score'] = g_m_score
+    df.at[index, 'Grant_FP_Score'] = g_fp_score
+    df.at[index, 'Grant_Reasoning'] = g_reason
+
+    time.sleep(3)
+
+    # 评估论文摘要
+    print("   👉 正在评估 论文摘要 (Paper)...")
+    p_m_score, p_fp_score, p_reason = get_scores(row['Paper_Abstract'])
+    df.at[index, 'Paper_Macro_Score'] = p_m_score
+    df.at[index, 'Paper_FP_Score'] = p_fp_score
+    df.at[index, 'Paper_Reasoning'] = p_reason
+
+    time.sleep(3)
+    print("-" * 40)
+
+# 6. 保存结果并自动下载
+output_filename = "Scored_CN-AI.xlsx"
+df.to_excel(output_filename, index=False)
+print(f"\n✅ 所有数据处理完毕！文件已保存为 {output_filename}")
+print("📥 正在自动下载文件到您的电脑中...")
+
+# 自动下载命令
+files.download(output_filename)
