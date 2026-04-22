@@ -1,0 +1,116 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+import seaborn as sns
+import os
+import warnings
+
+# 忽略字体缺失警告
+warnings.filterwarnings('ignore')
+
+# ==========================================
+# 1. 自动读取并合并您的 4 个原始打分文件
+# ==========================================
+file_names =[
+    'Scored_CN-AI.xlsx',
+    'Scored_CN-CA.xlsx',
+    'Scored_US-AI.xlsx',
+    'Scored_US-CA.xlsx'
+]
+
+df_list =[]
+for file in file_names:
+    # 检查文件是否上传
+    if os.path.exists(file):
+        print(f"✅ 成功读取文件: {file}")
+        temp_df = pd.read_excel(file)
+        df_list.append(temp_df)
+    else:
+        print(f"⚠️ 找不到文件: {file}，请检查左侧是否已成功上传！")
+
+if not df_list:
+    raise ValueError("没有找到任何数据文件，程序终止，请先上传文件！")
+
+# 将4个表拼成一个大表
+df = pd.concat(df_list, ignore_index=True)
+print(f"\n📊 4个文件合并完成！总计读取 {len(df)} 行数据。")
+
+# ==========================================
+# 2. 数据清洗与预处理
+# ==========================================
+# 自动修正您学生表头里的拼写错误 (Filed -> Field)
+if 'Filed' in df.columns:
+    df.rename(columns={'Filed': 'Field'}, inplace=True)
+
+# 确保“癌症”领域的名称统一 (如果有写成 CA 的，统一转为 Cancer)
+if 'Field' in df.columns:
+    df['Field'] = df['Field'].replace({'CA': 'Cancer', 'Cancer': 'Cancer'})
+
+# 提取打分列，并将可能包含文本错误(Error)的格子转为空值
+score_cols =['Grant_Macro_Score', 'Grant_FP_Score', 'Paper_Macro_Score', 'Paper_FP_Score']
+for col in score_cols:
+    df[col] = pd.to_numeric(df[col], errors='coerce')
+
+# 剔除打分失败的残缺数据
+df_clean = df.dropna(subset=score_cols).copy()
+
+# 计算核心指标：脱节差值 (Grant套话得分 - Paper套话得分)
+df_clean['Macro_Drop'] = df_clean['Grant_Macro_Score'] - df_clean['Paper_Macro_Score']
+
+print(f"🧹 数据清洗完毕，剔除无效打分后，剩余 {len(df_clean)} 条有效数据可用于绘图。\n")
+
+# ==========================================
+# 3. 设置顶级期刊绘图风格与颜色
+# ==========================================
+sns.set_theme(style="ticks", context="talk")
+colors = {'China': '#d62728', 'US': '#1f77b4'} # 中国红，美国蓝
+
+# ==========================================
+# 🎨 绘制 Figure 1: 基金申请书的初始双维分布
+# ==========================================
+g = sns.FacetGrid(df_clean, col="Field", hue="Country", palette=colors, height=6, aspect=1)
+g.map(sns.scatterplot, "Grant_Macro_Score", "Grant_FP_Score", alpha=0.7, s=100)
+for ax in g.axes.flat:
+    ax.axhline(5, ls='--', color='gray', alpha=0.5) # 十字基准线
+    ax.axvline(5, ls='--', color='gray', alpha=0.5)
+g.set_axis_labels("Grant: Macro Narrative Score", "Grant: Scientific Logic Score") # 使用严谨替换词
+g.add_legend(title="Country")
+# 移除主标题，符合顶刊排版规范
+plt.tight_layout()
+plt.show()
+
+# ==========================================
+# 🎨 绘制 Figure 2: 脱节斜率图
+# ==========================================
+df_melt = pd.melt(df_clean, id_vars=['Country', 'Field'],
+                  value_vars=['Grant_Macro_Score', 'Paper_Macro_Score'],
+                  var_name='Stage', value_name='Score')
+df_melt['Stage'] = df_melt['Stage'].map({'Grant_Macro_Score': '1. Grant', 'Paper_Macro_Score': '2. Paper'})
+
+fig, axes = plt.subplots(1, 2, figsize=(14, 6), sharey=True)
+for i, field in enumerate(['AI', 'Cancer']):
+    sns.pointplot(data=df_melt[df_melt['Field']==field], x='Stage', y='Score', hue='Country',
+                  palette=colors, markers=['o', 's'], linestyles=['-', '--'], ax=axes[i], dodge=True)
+    axes[i].set_title(f"Field: {field}")
+    axes[i].set_ylabel("Macro Narrative Score")
+    axes[i].set_xlabel("Publication Stage")
+    axes[i].grid(axis='y', linestyle='--', alpha=0.7)
+
+# 移除主标题，符合顶刊排版规范
+plt.tight_layout()
+plt.show()
+
+# ==========================================
+# 🎨 绘制 Figure 3: 学科敏感度箱线图 (脱节指数对比)
+# ==========================================
+plt.figure(figsize=(9, 6))
+sns.boxplot(data=df_clean, x="Field", y="Macro_Drop", hue="Country", palette=colors, width=0.5)
+# 添加半透明散点展示分布
+sns.stripplot(data=df_clean, x="Field", y="Macro_Drop", hue="Country", palette=colors, dodge=True, alpha=0.4, legend=False)
+plt.axhline(0, ls='--', color='black', alpha=0.5)
+plt.ylabel('Macro Drop (Grant Score - Paper Score)')
+plt.xlabel('Discipline')
+# 移除主标题，符合顶刊排版规范
+plt.tight_layout()
+plt.show()
+
+print("🎉 所有纯净版图表绘制完毕！请右键点击图片即可保存至电脑。")
